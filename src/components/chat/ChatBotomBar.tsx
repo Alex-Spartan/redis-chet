@@ -1,23 +1,149 @@
-import { AnimatePresence, motion } from "framer-motion";
-import { Image as ImageIcon, Loader, SendHorizontal, ThumbsUp } from "lucide-react";
+import {
+  Image as ImageIcon,
+  Loader,
+  SendHorizontal,
+  ThumbsUp,
+} from "lucide-react";
+import { CldUploadWidget, CloudinaryUploadWidgetInfo } from "next-cloudinary";
 import { Textarea } from "../ui/textarea";
-import { useRef, useState } from "react";
-import EmojiPicker from "./EmojiPicker";
+import { useEffect, useRef, useState } from "react";
 import { Button } from "../ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from "../ui/dialog";
+import Image from "next/image";
+import { AnimatePresence, motion } from "framer-motion";
+
+import EmojiPicker from "./EmojiPicker";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { sendMessageAction } from "@/app/actions/message.actions";
+import { useSelectedUser } from "@/store/useSelectedUser";
+import { useKindeBrowserClient } from "@kinde-oss/kinde-auth-nextjs";
+import { pusherClient } from "@/lib/pusher";
+import { Message } from "@/db/dummy";
 
 const ChatBotomBar = () => {
   const [message, setMessage] = useState("");
   const textAreaRef = useRef<HTMLTextAreaElement>(null);
-  const isPending = false;
+  const { selectedUser } = useSelectedUser();
+  const { user: currentUser } = useKindeBrowserClient();
+  const queryClient = useQueryClient();
+  const [imgUrl, setImgUrl] = useState("");
+
+  const handleSendMessage = () => {
+    if (!message.trim()) return;
+    sendMessage({
+      content: message,
+      messageType: "text",
+      receiverId: selectedUser?.id!,
+    });
+    setMessage("");
+    textAreaRef.current?.focus();
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+
+    if (e.key === "Enter" && e.shiftKey) {
+      e.preventDefault();
+      setMessage(message + "\n");
+    }
+  };
+
+  useEffect(() => {
+    const channelName = `${currentUser?.id}__${selectedUser?.id}`
+      .split("__")
+      .sort()
+      .join("__");
+    const channel = pusherClient.subscribe(channelName);
+
+    const handleNewMessage = (data: { message: Message }) => {
+      queryClient.setQueryData(
+        ["messages", selectedUser?.id],
+        (oldMessages: Message[]) => {
+          return [...oldMessages, data.message];
+        }
+      );
+    };
+
+    channel.bind("newMessage", handleNewMessage);
+
+    return () => {
+      channel.unbind("newMessage", handleNewMessage);
+      pusherClient.unsubscribe(channelName);
+    };
+  }, [currentUser?.id, selectedUser?.id, queryClient]);
+
+  const { mutate: sendMessage, isPending } = useMutation({
+    mutationFn: sendMessageAction,
+  });
+
+  
 
   return (
     <div className="p-2 flex justify-between w-full items-center gap-2">
       {!message.trim() && (
-        <ImageIcon size={20} className="cursor-pointer text-muted-foreground" />
+        <CldUploadWidget
+          onSuccess={(res, { widget }) => {
+            setImgUrl((res.info as CloudinaryUploadWidgetInfo).secure_url);
+            widget.close();
+          }}
+          signatureEndpoint="/api/sign-cloudinary-params"
+        >
+          {({ open }) => {
+            return (
+              <ImageIcon
+                onClick={() => open()}
+                size={20}
+                className="cursor-pointer text-muted-foreground"
+              />
+            );
+          }}
+        </CldUploadWidget>
       )}
+
+      <Dialog open={!!imgUrl}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Image Preview</DialogTitle>
+          </DialogHeader>
+          <div className="flex justify-center items-center relative h-96 w-full mx-auto">
+            <Image
+              src={imgUrl}
+              alt="Image Preview"
+              fill
+              className="object-contain"
+            />
+          </div>
+
+          <DialogFooter>
+            <Button
+              type="submit"
+              onClick={() => {
+                sendMessage({
+                  content: imgUrl,
+                  messageType: "image",
+                  receiverId: selectedUser?.id!,
+                });
+                setImgUrl("");
+              }}
+            >
+              Send
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
 
       <AnimatePresence>
         <motion.div
+          key={"h"}
           layout
           initial={{ opacity: 0, scale: 1 }}
           animate={{ opacity: 1, scale: 1 }}
@@ -37,6 +163,7 @@ const ChatBotomBar = () => {
             rows={1}
             className="w-full border rounded-full flex items-center min-h-0 h-9 resize-none overflow-hidden bg-background"
             value={message}
+            onKeyDown={handleKeyDown}
             onChange={(e) => setMessage(e.target.value)}
             ref={textAreaRef}
           />
@@ -57,6 +184,7 @@ const ChatBotomBar = () => {
             size={"icon"}
             variant={"outline"}
             className="h-9 w-9 dark:bg-muted dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-white shrink-0"
+            onClick={handleSendMessage}
           >
             <SendHorizontal size={20} className="text-muted-foreground" />
           </Button>
@@ -66,8 +194,12 @@ const ChatBotomBar = () => {
             variant={"outline"}
             className="h-9 w-9 dark:bg-muted dark:text-muted-foreground dark:hover:bg-muted dark:hover:text-white shrink-0"
           >
-            {isPending && <Loader size={20} className="text-muted-foreground" />}
-            {!isPending && <ThumbsUp size={20} className="text-muted-foreground" />}
+            {isPending && (
+              <Loader size={20} className="text-muted-foreground" />
+            )}
+            {!isPending && (
+              <ThumbsUp size={20} className="text-muted-foreground" />
+            )}
           </Button>
         )}
       </AnimatePresence>

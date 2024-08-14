@@ -10,7 +10,7 @@ const AuthButtons = () => {
       <Button className="w-full" variant={"outline"}>
         <RegisterLink>Sign up</RegisterLink>
       </Button>
-      <Button className="w-full">
+      <Button className="w-full font-bold">
         <LoginLink>Log in</LoginLink>
       </Button>
     </div>
